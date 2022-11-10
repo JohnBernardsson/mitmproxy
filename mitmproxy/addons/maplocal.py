@@ -4,34 +4,53 @@ import re
 import urllib.parse
 from collections.abc import Sequence
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, Union
 
 from werkzeug.security import safe_join
 
 from mitmproxy import ctx, exceptions, flowfilter, http, version
 from mitmproxy.utils.spec import parse_spec
 
+replacement_group_regex = r'\${[0-9]+}'
 
 class MapLocalSpec(NamedTuple):
     matches: flowfilter.TFilter
     regex: str
     local_path: Path
 
+class MapLocalCapturingSpec(NamedTuple):
+    matches: flowfilter.TFilter
+    regex: str
+    replacement: str
+    replacement_groups: dict
 
-def parse_map_local_spec(option: str) -> MapLocalSpec:
+
+def parse_map_local_spec(option: str) -> Union[MapLocalSpec,MapLocalCapturingSpec]:
     filter, regex, replacement = parse_spec(option)
+
+    r_matches = re.findall(replacement_group_regex, replacement)
 
     try:
         re.compile(regex)
     except re.error as e:
         raise ValueError(f"Invalid regular expression {regex!r} ({e})")
 
-    try:
-        path = Path(replacement).expanduser().resolve(strict=True)
-    except FileNotFoundError as e:
-        raise ValueError(f"Invalid file path: {replacement} ({e})")
-
-    return MapLocalSpec(filter, regex, path)
+    if r_matches is None:
+        try:
+            path = Path(replacement).expanduser().resolve(strict=True)
+        except FileNotFoundError as e:
+            raise ValueError(f"Invalid file path: {replacement} ({e})")
+        return MapLocalSpec(filter, regex, path)
+    else:
+        replacement_groups = {}
+        for r_group in r_matches:
+            try:
+                # for replacement ${1}, we save group index 0
+                r_group_idx = int(r_group[2:-1]) - 1
+                replacement_groups[r_group_idx] = r_group
+            except re.error as e:
+                raise ValueError(f"Invalid value on replacement group: {r_group} ({e})")
+        return MapLocalCapturingSpec(filter, regex, replacement, replacement_groups)
 
 
 def _safe_path_join(root: Path, untrusted: str) -> Path:
@@ -46,11 +65,18 @@ def _safe_path_join(root: Path, untrusted: str) -> Path:
     return Path(joined)
 
 
-def file_candidates(url: str, spec: MapLocalSpec) -> list[Path]:
+def file_candidates(url: str, spec: Union[MapLocalSpec,MapLocalCapturingSpec]) -> list[Path]:
     """
     Get all potential file candidates given a URL and a mapping spec ordered by preference.
     This function already assumes that the spec regex matches the URL.
     """
+    if getattr(spec, 'local_path', None):
+        return file_candidates_basic(url, spec)
+    else:
+        return file_candidates_capturing(url, spec)
+
+
+def file_candidates_basic(url: str, spec: MapLocalSpec) -> list[Path]:
     m = re.search(spec.regex, url)
     assert m
     if m.groups():
@@ -73,6 +99,29 @@ def file_candidates(url: str, spec: MapLocalSpec) -> list[Path]:
             return []
     else:
         return [spec.local_path / "index.html"]
+
+
+def file_candidates_capturing(url: str, spec: MapLocalCapturingSpec) -> list[Path]:
+    url_matches = re.findall(spec.regex, url)
+    replaced_local_path = spec.replacement
+
+    if url_matches is None:
+        ctx.log.warn(f"No capturing groups result for: {url}. Maybe there is an error on capturing regex? : {spec.regex}")
+        return []
+    else:
+        matchIdx = 0
+        if type(url_matches[0]) is tuple:
+            url_matches = url_matches[0]
+        for match in url_matches:
+            replaced_local_path = replaced_local_path.replace(spec.replacement_groups[matchIdx], match)
+            matchIdx += 1
+
+    try:
+        path = Path(replaced_local_path).expanduser().resolve(strict=True)
+    except FileNotFoundError as e:
+        return []
+
+    return [path, path / "index.html"]
 
 
 class MapLocal:
@@ -113,7 +162,7 @@ class MapLocal:
         all_candidates = []
         for spec in self.replacements:
             if spec.matches(flow) and re.search(spec.regex, url):
-                if spec.local_path.is_file():
+                if getattr(spec, 'local_path', None) and spec.local_path.is_file():
                     candidates = [spec.local_path]
                 else:
                     candidates = file_candidates(url, spec)
