@@ -106,7 +106,7 @@ def file_candidates_capturing(url: str, spec: MapLocalCapturingSpec) -> list[Pat
     replaced_local_path = spec.replacement
 
     if url_matches is None:
-        ctx.log.warn(f"No capturing groups result for: {url}. Maybe there is an error on capturing regex? : {spec.regex}")
+        logging.warn(f"No capturing groups result for: {url}. Maybe there is an error on capturing regex? : {spec.regex}")
         return []
     else:
         matchIdx = 0
