@@ -35,7 +35,7 @@ def parse_map_local_spec(option: str) -> Union[MapLocalSpec,MapLocalCapturingSpe
     except re.error as e:
         raise ValueError(f"Invalid regular expression {regex!r} ({e})")
 
-    if r_matches is None:
+    if len(r_matches) == 0:
         try:
             path = Path(replacement).expanduser().resolve(strict=True)
         except FileNotFoundError as e:
