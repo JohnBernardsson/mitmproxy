@@ -1,46 +1,57 @@
 """
-    The following operators are understood:
+The following operators are understood:
 
-        ~q          Request
-        ~s          Response
+    ~q          Request
+    ~s          Response
 
-    Headers:
+Headers:
 
-        Patterns are matched against "name: value" strings. Field names are
-        all-lowercase.
+    Patterns are matched against "name: value" strings. Field names are
+    all-lowercase.
 
-        ~a          Asset content-type in response. Asset content types are:
-                        text/javascript
-                        application/x-javascript
-                        application/javascript
-                        text/css
-                        image/*
-                        font/*
-                        application/font-*
-        ~h rex      Header line in either request or response
-        ~hq rex     Header in request
-        ~hs rex     Header in response
+    ~a          Asset content-type in response. Asset content types are:
+                    text/javascript
+                    application/x-javascript
+                    application/javascript
+                    text/css
+                    image/*
+                    font/*
+                    application/font-*
+    ~h rex      Header line in either request or response
+    ~hq rex     Header in request
+    ~hs rex     Header in response
 
-        ~b rex      Expression in the body of either request or response
-        ~bq rex     Expression in the body of request
-        ~bs rex     Expression in the body of response
-        ~t rex      Shortcut for content-type header.
+    ~b rex      Expression in the body of either request or response
+    ~bq rex     Expression in the body of request
+    ~bs rex     Expression in the body of response
+    ~t rex      Shortcut for content-type header.
 
-        ~d rex      Request domain
-        ~m rex      Method
-        ~u rex      URL
-        ~c CODE     Response code.
-        rex         Equivalent to ~u rex
+    ~d rex      Request domain
+    ~m rex      Method
+    ~u rex      URL
+    ~c CODE     Response code.
+    rex         Equivalent to ~u rex
 """
 
 import functools
+import os
 import re
 import sys
 from collections.abc import Sequence
-from typing import ClassVar, Protocol, Union
+from typing import ClassVar
+from typing import Protocol
+
 import pyparsing as pp
 
-from mitmproxy import dns, flow, http, tcp, udp
+from mitmproxy import dns
+from mitmproxy import flow
+from mitmproxy import http
+from mitmproxy import tcp
+from mitmproxy import udp
+
+maybe_ignore_case = (
+    re.IGNORECASE if os.environ.get("MITMPROXY_CASE_SENSITIVE_FILTERS") != "1" else 0
+)
 
 
 def only(*types):
@@ -174,7 +185,7 @@ class _Rex(_Action):
         if self.is_binary:
             expr = expr.encode()
         try:
-            self.re = re.compile(expr, self.flags)
+            self.re = re.compile(expr, self.flags | maybe_ignore_case)
         except Exception:
             raise ValueError("Cannot compile expression.")
 
@@ -288,19 +299,25 @@ class FBod(_Rex):
     @only(http.HTTPFlow, tcp.TCPFlow, udp.UDPFlow, dns.DNSFlow)
     def __call__(self, f):
         if isinstance(f, http.HTTPFlow):
-            if f.request and f.request.raw_content:
-                if self.re.search(f.request.get_content(strict=False)):
+            if (
+                f.request
+                and (content := f.request.get_content(strict=False)) is not None
+            ):
+                if self.re.search(content):
                     return True
-            if f.response and f.response.raw_content:
-                if self.re.search(f.response.get_content(strict=False)):
+            if (
+                f.response
+                and (content := f.response.get_content(strict=False)) is not None
+            ):
+                if self.re.search(content):
                     return True
             if f.websocket:
-                for msg in f.websocket.messages:
-                    if self.re.search(msg.content):
+                for wmsg in f.websocket.messages:
+                    if wmsg.content is not None and self.re.search(wmsg.content):
                         return True
         elif isinstance(f, (tcp.TCPFlow, udp.UDPFlow)):
             for msg in f.messages:
-                if self.re.search(msg.content):
+                if msg.content is not None and self.re.search(msg.content):
                     return True
         elif isinstance(f, dns.DNSFlow):
             if f.request and self.re.search(f.request.content):
@@ -318,12 +335,15 @@ class FBodRequest(_Rex):
     @only(http.HTTPFlow, tcp.TCPFlow, udp.UDPFlow, dns.DNSFlow)
     def __call__(self, f):
         if isinstance(f, http.HTTPFlow):
-            if f.request and f.request.raw_content:
-                if self.re.search(f.request.get_content(strict=False)):
+            if (
+                f.request
+                and (content := f.request.get_content(strict=False)) is not None
+            ):
+                if self.re.search(content):
                     return True
             if f.websocket:
-                for msg in f.websocket.messages:
-                    if msg.from_client and self.re.search(msg.content):
+                for wmsg in f.websocket.messages:
+                    if wmsg.from_client and self.re.search(wmsg.content):
                         return True
         elif isinstance(f, (tcp.TCPFlow, udp.UDPFlow)):
             for msg in f.messages:
@@ -342,12 +362,15 @@ class FBodResponse(_Rex):
     @only(http.HTTPFlow, tcp.TCPFlow, udp.UDPFlow, dns.DNSFlow)
     def __call__(self, f):
         if isinstance(f, http.HTTPFlow):
-            if f.response and f.response.raw_content:
-                if self.re.search(f.response.get_content(strict=False)):
+            if (
+                f.response
+                and (content := f.response.get_content(strict=False)) is not None
+            ):
+                if self.re.search(content):
                     return True
             if f.websocket:
-                for msg in f.websocket.messages:
-                    if not msg.from_client and self.re.search(msg.content):
+                for wmsg in f.websocket.messages:
+                    if not wmsg.from_client and self.re.search(wmsg.content):
                         return True
         elif isinstance(f, (tcp.TCPFlow, udp.UDPFlow)):
             for msg in f.messages:
@@ -361,7 +384,6 @@ class FBodResponse(_Rex):
 class FMethod(_Rex):
     code = "m"
     help = "Method"
-    flags = re.IGNORECASE
 
     @only(http.HTTPFlow)
     def __call__(self, f):
@@ -371,7 +393,6 @@ class FMethod(_Rex):
 class FDomain(_Rex):
     code = "d"
     help = "Domain"
-    flags = re.IGNORECASE
     is_binary = False
 
     @only(http.HTTPFlow)
@@ -413,7 +434,7 @@ class FSrc(_Rex):
         if not f.client_conn or not f.client_conn.peername:
             return False
         r = f"{f.client_conn.peername[0]}:{f.client_conn.peername[1]}"
-        return f.client_conn.peername and self.re.search(r)
+        return self.re.search(r)
 
 
 class FDst(_Rex):
@@ -425,7 +446,7 @@ class FDst(_Rex):
         if not f.server_conn or not f.server_conn.address:
             return False
         r = f"{f.server_conn.address[0]}:{f.server_conn.address[1]}"
-        return f.server_conn.address and self.re.search(r)
+        return self.re.search(r)
 
 
 class FReplay(_Action):
@@ -625,8 +646,7 @@ bnf = _make()
 class TFilter(Protocol):
     pattern: str
 
-    def __call__(self, f: flow.Flow) -> bool:
-        ...  # pragma: no cover
+    def __call__(self, f: flow.Flow) -> bool: ...  # pragma: no cover
 
 
 def parse(s: str) -> TFilter:
@@ -644,7 +664,7 @@ def parse(s: str) -> TFilter:
         raise ValueError(f"Invalid filter expression: {s!r}") from e
 
 
-def match(flt: Union[str, TFilter], flow: flow.Flow) -> bool:
+def match(flt: str | TFilter, flow: flow.Flow) -> bool:
     """
     Matches a flow against a compiled filter expression.
     Returns True if matched, False if not.

@@ -8,7 +8,11 @@ from typing import NamedTuple, Union
 
 from werkzeug.security import safe_join
 
-from mitmproxy import ctx, exceptions, flowfilter, http, version
+from mitmproxy import ctx
+from mitmproxy import exceptions
+from mitmproxy import flowfilter
+from mitmproxy import http
+from mitmproxy import version
 from mitmproxy.utils.spec import parse_spec
 
 replacement_group_regex = r'\${[0-9]+}'
@@ -125,7 +129,7 @@ def file_candidates_capturing(url: str, spec: MapLocalCapturingSpec) -> list[Pat
 
 
 class MapLocal:
-    def __init__(self):
+    def __init__(self) -> None:
         self.replacements: list[MapLocalSpec] = []
 
     def load(self, loader):

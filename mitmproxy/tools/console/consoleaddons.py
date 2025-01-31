@@ -3,7 +3,8 @@ import logging
 from collections.abc import Sequence
 
 import mitmproxy.types
-from mitmproxy import command, command_lexer
+from mitmproxy import command
+from mitmproxy import command_lexer
 from mitmproxy import contentviews
 from mitmproxy import ctx
 from mitmproxy import dns
@@ -283,6 +284,27 @@ class ConsoleAddon:
             quoted += " "
         signals.status_prompt_command.send(partial=quoted)
 
+    @command.command("console.command.confirm")
+    def console_command_confirm(
+        self,
+        prompt: str,
+        cmd: mitmproxy.types.Cmd,
+        *args: mitmproxy.types.CmdArgs,
+    ) -> None:
+        """
+        Prompt the user before running the specified command.
+        """
+
+        def callback(opt):
+            if opt == "n":
+                return
+            try:
+                self.master.commands.call_strings(cmd, args)
+            except exceptions.CommandError as e:
+                logger.exception(str(e))
+
+        self.master.prompt_for_user_choice(prompt, callback)
+
     @command.command("console.command.set")
     def console_command_set(self, option_name: str) -> None:
         """
@@ -374,7 +396,9 @@ class ConsoleAddon:
         flow = self.master.view.focus.flow
         focus_options = []
 
-        if isinstance(flow, tcp.TCPFlow):
+        if flow is None:
+            raise exceptions.CommandError("No flow selected.")
+        elif isinstance(flow, tcp.TCPFlow):
             focus_options = ["tcp-message"]
         elif isinstance(flow, udp.UDPFlow):
             focus_options = ["udp-message"]
@@ -395,6 +419,8 @@ class ConsoleAddon:
                 "set-cookies",
                 "url",
             ]
+            if flow.websocket:
+                focus_options.append("websocket-message")
         elif isinstance(flow, dns.DNSFlow):
             raise exceptions.CommandError(
                 "Cannot edit DNS flows yet, please submit a patch."
@@ -464,6 +490,10 @@ class ConsoleAddon:
             )
         elif flow_part in ["tcp-message", "udp-message"]:
             message = flow.messages[-1]
+            c = self.master.spawn_editor(message.content or b"")
+            message.content = c.rstrip(b"\n")
+        elif flow_part == "websocket-message":
+            message = flow.websocket.messages[-1]
             c = self.master.spawn_editor(message.content or b"")
             message.content = c.rstrip(b"\n")
 

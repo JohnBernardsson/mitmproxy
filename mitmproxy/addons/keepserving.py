@@ -1,5 +1,9 @@
+from __future__ import annotations
+
 import asyncio
+
 from mitmproxy import ctx
+from mitmproxy.utils import asyncio_utils
 
 
 class KeepServing:
@@ -39,4 +43,8 @@ class KeepServing:
             ctx.options.rfile,
         ]
         if any(opts) and not ctx.options.keepserving:
-            asyncio.get_running_loop().create_task(self.watch())
+            asyncio_utils.create_task(
+                self.watch(),
+                name="keepserving",
+                keep_ref=True,
+            )

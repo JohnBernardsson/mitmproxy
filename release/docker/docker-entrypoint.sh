@@ -15,10 +15,11 @@ fi
 usermod -o \
     -u $(stat -c "%u" "$f") \
     -g $(stat -c "%g" "$f") \
-    mitmproxy
+    mitmproxy \
+    >/dev/null  # hide "usermod: no changes"
 
 if [[ "$1" = "mitmdump" || "$1" = "mitmproxy" || "$1" = "mitmweb" ]]; then
-  gosu mitmproxy "$@"
+  exec gosu mitmproxy "$@"
 else
   exec "$@"
 fi

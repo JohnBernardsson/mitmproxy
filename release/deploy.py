@@ -2,7 +2,6 @@
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 # Security: No third-party dependencies here!
 
@@ -10,12 +9,14 @@ root = Path(__file__).absolute().parent.parent
 
 if __name__ == "__main__":
     ref = os.environ["GITHUB_REF"]
-    branch: Optional[str] = None
-    tag: Optional[str] = None
+    branch: str | None = None
+    tag: str | None = None
     if ref.startswith("refs/heads/"):
         branch = ref.replace("refs/heads/", "")
     elif ref.startswith("refs/tags/"):
-        tag = ref.replace("refs/tags/", "")
+        if not ref.startswith("refs/tags/v"):
+            raise AssertionError(f"Unexpected tag: {ref}")
+        tag = ref.replace("refs/tags/v", "")
     else:
         raise AssertionError
 
@@ -24,6 +25,7 @@ if __name__ == "__main__":
         upload_dir = tag
     else:
         upload_dir = f"branches/{branch}"
+    # Ideally we could have R2 pull from S3 automatically, but that's not possible yet. So we upload to both.
     print(f"Uploading binaries to snapshots.mitmproxy.org/{upload_dir}...")
     subprocess.check_call(
         [
@@ -31,14 +33,37 @@ if __name__ == "__main__":
             "s3",
             "sync",
             "--delete",
-            "--acl",
-            "public-read",
-            "--exclude",
-            "*.msix",
+            *("--acl", "public-read"),
+            *("--exclude", "*.msix"),
             root / "release/dist",
             f"s3://snapshots.mitmproxy.org/{upload_dir}",
         ]
     )
+    if tag:
+        # We can't scope R2 tokens, so they are only exposed in the deploy env.
+        print(f"Uploading binaries to downloads.mitmproxy.org/{upload_dir}...")
+        subprocess.check_call(
+            [
+                "aws",
+                "s3",
+                "sync",
+                "--delete",
+                *("--acl", "public-read"),
+                *("--exclude", "*.msix"),
+                *(
+                    "--endpoint-url",
+                    f"https://{os.environ['R2_ACCOUNT_ID']}.r2.cloudflarestorage.com",
+                ),
+                root / "release/dist",
+                f"s3://downloads/{upload_dir}",
+            ],
+            env={
+                **os.environ,
+                "AWS_REGION": "auto",
+                "AWS_ACCESS_KEY_ID": os.environ["R2_ACCESS_KEY_ID"],
+                "AWS_SECRET_ACCESS_KEY": os.environ["R2_SECRET_ACCESS_KEY"],
+            },
+        )
 
     # Upload releases to PyPI
     if tag:

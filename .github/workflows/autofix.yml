@@ -1,0 +1,38 @@
+name: autofix.ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  autofix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: mhils/workflows/checkout@0d7c124ffff22d26be111477a3ed9fadd853a6db
+      - uses: mhils/workflows/setup-python@0d7c124ffff22d26be111477a3ed9fadd853a6db
+
+      - run: pip install -e .[dev]
+      - run: ruff check --fix-only .
+      - run: ruff format .
+
+      - run: web/gen/all
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .github/node-version.txt
+      - run: npm ci
+        working-directory: web
+      - run: npm run eslint
+        working-directory: web
+        continue-on-error: true
+      - run: npm run prettier
+        working-directory: web
+
+      - uses: mhils/add-pr-ref-in-changelog@main
+
+      - uses: autofix-ci/action@2891949f3779a1cafafae1523058501de3d4e944

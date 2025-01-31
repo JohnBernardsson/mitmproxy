@@ -1,24 +1,22 @@
-import reduceModal, * as ModalActions from '../../../ducks/ui/modal'
+import modalReducer, {
+    setActiveModal,
+    hideModal,
+} from "../../../ducks/ui/modal";
 
-describe('modal reducer', () => {
+describe("modal reducer", () => {
+    it("should return the initial state", () => {
+        expect(modalReducer(undefined, { type: "unknown" })).toEqual({
+            activeModal: undefined,
+        });
+    });
 
-    it('should return the initial state', () => {
-        expect(reduceModal(undefined, {})).toEqual(
-            { activeModal: undefined }
-        )
-    })
+    it("should handle setActiveModal action", () => {
+        const state = modalReducer(undefined, setActiveModal("foo"));
+        expect(state).toEqual({ activeModal: "foo" });
+    });
 
-    it('should handle setActiveModal action', () => {
-        let state = reduceModal(undefined, ModalActions.setActiveModal('foo'))
-        expect(state).toEqual(
-            { activeModal: 'foo' }
-        )
-    })
-
-    it('should handle hideModal action', () => {
-        let state = reduceModal(undefined, ModalActions.hideModal())
-        expect(state).toEqual(
-            { activeModal: undefined }
-        )
-    })
-})
+    it("should handle hideModal action", () => {
+        const state = modalReducer({ activeModal: "foo" }, hideModal());
+        expect(state).toEqual({ activeModal: undefined });
+    });
+});
